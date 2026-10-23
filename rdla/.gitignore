@@ -1,0 +1,4 @@
+*.rdla
+store_*.rdla
+.zig-cache/
+zig-out/

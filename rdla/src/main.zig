@@ -5,13 +5,18 @@ const tok = @import("tok.zig");
 const idiom = @import("idiom.zig");
 const ctx = @import("ctx.zig");
 const store = @import("store.zig");
+const gen = @import("gen.zig");
 
 test {
     _ = tok;
     _ = idiom;
     _ = ctx;
     _ = @import("store.zig");
+    _ = gen;
 }
+
+/// Minimum attestations for a taught gloss (glossAuto raises it to clear the unit's own context noise).
+const GLOSS_WEIGHT = 16;
 
 const Row = struct { h: u64, asym: f64, n: u32 };
 
@@ -21,6 +26,24 @@ pub fn main(init: std.process.Init) !void {
     const args = try init.minimal.args.toSlice(init.arena.allocator());
     if (args.len < 2) {
         std.debug.print("usage: rdla <tape.txt> [idioms.txt] [shards] [window]\n", .{});
+        return;
+    }
+    if (std.mem.eql(u8, args[1], "ask")) {
+        if (args.len < 4) return std.debug.print("usage: rdla ask <table.rdla> \"question\" [sentences]\n", .{});
+        var o = try store.open(io, args[2], false);
+        defer o.acc.deinit();
+        var sp2 = tok.Spellings.init(a);
+        try store.readSpellings(io, a, args[2], &sp2);
+        const t = gen.Table{ .acc = &o.acc, .sp = &sp2, .window = o.header.window };
+        const q = (try gen.parseQuestion(a, t, args[3])) orelse return std.debug.print("(no known subject in the question)\n", .{});
+        var w = gen.Weights{};
+        var r = try gen.Realiser.init(a, t, q, &w);
+        defer r.deinit();
+        var out: std.ArrayList(u8) = .empty;
+        const ns: usize = if (args.len > 4) try std.fmt.parseInt(usize, args[4], 10) else 2;
+        try r.render(&out, ns);
+        if (q.kind == .yesno) if (try gen.rankOf(a, t, q.subject, q.other)) |rk| std.debug.print("[rank {d} of {d}]\n", .{ rk, o.acc.used });
+        std.debug.print("[{s}] {s}\n", .{ @tagName(q.kind), out.items });
         return;
     }
     const shards: usize = if (args.len > 3) try std.fmt.parseInt(usize, args[3], 10) else 1;
@@ -57,7 +80,7 @@ pub fn main(init: std.process.Init) !void {
         const hi = @min(lo + per, units.items.len);
         try acc.centers(units.items, lo, hi, window);
     }
-    for (es.list.items) |e| try acc.gloss(e.unit, e.gloss, 1);
+    for (es.list.items) |e| try acc.glossAuto(e.unit, e.gloss, GLOSS_WEIGHT);
 
     if (out_path) |op| {
         try store.sync(&acc);

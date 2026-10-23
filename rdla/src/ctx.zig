@@ -117,7 +117,21 @@ pub const Acc = struct {
     pub fn gloss(self: *Acc, unit: u64, tokens: []const u64, times: i32) !void {
         const s = try self.slot(unit);
         const r = seedVec(GLOSS_ROLE);
-        for (tokens) |t| addVec(self.right[s * D ..][0..D], bind(seedVec(t), r), times);
+        for (tokens) |t| {
+            _ = try self.slot(t); // gloss words must exist as units so they can be read back
+            addVec(self.right[s * D ..][0..D], bind(seedVec(t), r), times);
+        }
+    }
+
+    /// Like `gloss`, but sizes the attestation count so the gloss stands ~6 standard deviations above the
+    /// leakage noise of the unit's existing right-context bundle (never below `floor`). A pure function of
+    /// the tape and the idiom list.
+    pub fn glossAuto(self: *Acc, unit: u64, tokens: []const u64, floor: i32) !void {
+        const s = try self.slot(unit);
+        var ss: f64 = 0;
+        for (self.right[s * D ..][0..D]) |x| ss += @as(f64, @floatFromInt(x)) * @as(f64, @floatFromInt(x));
+        const need: i32 = @intFromFloat(@ceil(6.0 * @sqrt(ss) / @as(f64, D)));
+        try self.gloss(unit, tokens, @max(floor, need));
     }
 
     pub fn merge(self: *Acc, other: *const Acc) !void {

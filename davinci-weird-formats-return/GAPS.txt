@@ -1,0 +1,135 @@
+GAPS LEDGER
+
+Four parts: gaps in this return; commission rules that bent when I built against them; tightenings I had to
+invent; exhibit statements I tested. Part 4 is a table of measurements, one line each.
+
+======================================================================
+PART 1. GAPS IN THIS RETURN  (open)
+======================================================================
+G1  Names. The core has no rule from a name to a prime, so "every mechanism stated as addressing, write
+    and read rules" is only true from the prime inward. Two policies are provided and both cost something:
+    dictionary (knowledge.zig; exact, but the dictionary is an index) and hash-to-prime with probing
+    (named.zig; no dictionary, but a collision makes the bytes order-dependent, a false "found" measured
+    0.11% in a crowded range, and removal can only be a tombstone).
+G2  Speed. Every operation is O(size of the store). Reads are 170x (250 facts) to 600x (1,000 facts) slower
+    than the exhibits' table lookup on the same machine, and the gap grows linearly. Residue pages are the
+    proposed fix and are unbuilt.
+G3  Persistence. Every write changes every limb of K (measured 1.0000): no append log, no incremental write.
+G4  Retrieval by endpoint. "All facts about subject X" has no index and needs a candidate list.
+G5  Key universe. The code uses primes below 2^32 (203,280,221 keys). Hash-to-prime collision probability is
+    about n^2/(2 x 203M): 0.25% at 1,000 names, 22% at 10,000. The mathematics has no such limit; the code does.
+G6  Capacity is a comptime parameter. Fail-closed (error.Overflow, base unchanged), not growable.
+G7  Integrity. None by default. The seal detects corruption with probability about 1 - 2^-32 using a
+    non-cryptographic digest; it does not correct and goes stale on any write.
+G8  Data. Everything was measured on synthetic keys and values. No natural-language corpus. Timing at
+    n <= 1,500 facts; order-independence at n <= 400; glue at <= 300 facts (it is O(size^2)).
+G9  Platforms. x86_64-linux and wasm32-wasi (32-bit, little-endian) were run. Big-endian was not; the
+    encoding is explicit big-endian by construction.
+G10 Timing figures exist for Zig 0.14.1 and 0.15.2 only; std.time timers are gone in 0.16 and 0.17.
+G11 Validity. decode cannot prove M is squarefree or has only prime factors; verify(universe) can, by scanning.
+    put refuses a store whose M repeats a prime, but get and has on such a store return unspecified values.
+G12 Priority. Three web searches found the Chinese Remainder Theorem in residue number systems and in the
+    Mignotte and Asmuth-Bloom secret-sharing schemes, and prime-power Godel numbering. None found a CRT
+    key-value store or a gcd-of-differences comparison of two bases. Absence of evidence; no priority claim.
+G13 Glue reports Conflict without saying which keys; use diff for that.
+
+======================================================================
+PART 2. COMMISSION RULES THAT BENT  (what failed when I built against them)
+======================================================================
+B1  "Single command; Zig only". ziglang.org was unreachable from the sandbox (HTTP 403 on CONNECT). The
+    toolchains are the PyPI `ziglang` wheels for 0.14.1, 0.15.2, 0.16.0 and 0.17.0; pip was used only to fetch
+    them. `zig build` is not provided: build.zig APIs differ across those releases. `zig test src/root.zig` is
+    the command.
+B2  "No Python anywhere in the deliverable". Satisfied. Outside it: Python's stdlib zipfile listed the archive;
+    Python's int was an independent oracle for the bignum (460 vectors, operands up to 12,160 bits; scratch,
+    not shipped); rustc compiled the exhibit modules for the measurements marked [R]; Node ran the wasm builds.
+B3  "Scale claims must name the corpus size". All data is synthetic (G8).
+B4  TEST 4's spent list names phase accumulation, FFT bins and moire mask differencing as structures "the
+    exhibits" use. The package has no code for them (no FFT, phase store, grating mask, bitset popcount,
+    bytes-as-floats or byte cube); they appear only in SEED_FORMATS.txt. I treated them as spent anyway.
+B5  Zig 0.17.0 rejects `[_]T{x} ** N`; replaced by @splat. Zig 0.16 and 0.17 removed std.time timers.
+B6  A defect in my own code was found by review, not by the tests on x86_64: decode computed `at + ml + 4`
+    from an attacker-controlled length, which wraps a 32-bit usize. A mutation run on wasm32 confirmed the panic
+    ("integer overflow"); x86_64 hides it. Fixed with subtraction-based bounds and pinned by a test.
+
+======================================================================
+PART 3. TIGHTENINGS I HAD TO INVENT
+======================================================================
+T1  Fixed-capacity bignum with documented headroom (add/mulSmall need 1 limb, addMulSmall 2, put 3): no
+    allocator, so identical bytes on every compiler.
+T2  My own SplitMix64 and FNV-1a, because std.Random and std hashes change between releases.
+T3  keysInto checks its answer by recomposition (product of keys found == M) and reports IncompleteUniverse.
+T4  verify(universe), a strict decoder, and a refusal in put when M repeats a prime.
+T5  The seal as an ordinary fact under the reserved key 4294967291.
+T6  Named-layer layout: 12-bit fingerprint, 16-bit payload, payload 0xFFFF reserved as the tombstone.
+T7  "Same facts" for determinism means the finite partial function key -> value, not names.
+T8  Provenance by residue class mod 8, and values packed as relation(7) confidence(4) domain(4) modality(3).
+
+======================================================================
+PART 4. EXHIBIT STATEMENTS TESTED
+======================================================================
+[Z] reproduced by `zig test audit/exhibit_audit.zig`  (cross-checked against the Rust numbers)
+[R] measured by compiling the exhibits' own Rust modules unmodified (rustc 1.97.0); harness not shipped
+[C] read from the code
+statement (where)                                         measured
+Slot is 32 bytes (table.rs header) / 40 (INVARIANTS,      48 bytes, align 8; 2^24 slots = 768 MiB       [Z][R]
+  persist.rs)
+GOLDEN_STEP = floor(2^24/phi) = 10,368,890, coprime       floor is 10,368,889; the constant is even, gcd 2,
+  (table.rs:23-26)                                          and unused; the live step ORs in 1 (10,368,891) [Z][R]
+Fibonacci table spans ~1.8e12 (superposition_decoder.rs)  3.25e13 for the 2,3-seeded table              [Z][R]
+Tribonacci hash: neighbours attract related content       bench7.rs is not in the package, so the claim is
+  (INVARIANT 4)                                             unverified. The code maps all 475,254 lowercase
+                                                            strings of length 1-4 to 51 addresses (0..50);
+                                                            bound 25/(1-1/c) = 54.8                     [Z][R]
+Other hash methods, same 475,254 strings                  Original 189, PhiRatio 177 (collapses to one
+                                                            integer, 176 values), SilverRatio 501       [Z][R]
+Over 4,783 real words (exhibit text), 2^24 addresses      Tribonacci 48, Original 254, PhiRatio 1,295,
+                                                            SilverRatio 3,283, the rest 4,475-4,782     [R]
+Lookups succeed below 80% load (table.rs comment)         inserted keys unfindable (probe cap 128):
+                                                            2^12: 10 @90%, 39 @95%; 2^16: 165 @90%, 889 @95%
+                                                            [Z]; 2^20: 89 @80%, 3,809 @90%             [R]
+settle() applies Hebbian updates until energy stops       prediction above score: stops after 2 iterations
+                                                            with error -10 still there; below: 12 iterations
+                                                            to zero (f32 -> u16 truncation)            [Z][R]
+Unknown carousel characters are distinguishable           code 0b00011111 is also ':'                  [Z]
+Keys over 16 bytes are hashed to 16 (INVARIANTS)          Relation and chain-head keys are; Word, bigram and
+                                                            trigram keys are truncated. In the exhibit text
+                                                            9.7% of bigrams and 47.1% of trigrams exceed 16
+                                                            bytes; 12.6% / 17.1% of those share a stored
+                                                            prefix with another key                   [R][C]
+Relation threading is closed (table.rs)                   the same triple inserted twice gives a chain of
+                                                            10,000 (self-loop); the key omits the relation
+                                                            type, so IS then HAS on one pair keeps only HAS [R]
+.crsl load restores relations (crsl_loader.rs)            copy loop re-inserts slots: 100% lose their opcode,
+                                                            46-49% of slots move, 65% of endpoints dangle   [R]
+Table image is a property of the facts                    identical facts in two insertion orders: 4.9% to
+                                                            34% of occupied slots differ                [R]
+Interference reasoner derives true facts                  over {spot,dog,bark} x {IS,CAN} x {...} at
+                                                            threshold 0.3: 16 of 18 accepted, 3 supported [R]
+Every triple carries source, person, domain, modality     RelationalTriple has source, person, slot_val;
+  (INVARIANT 3)                                             domain and modality are computed and dropped
+                                                            (TODO ARCH-3); ingest ignores _source and
+                                                            _person_override; re-derivation sets Unknown  [C]
+10-bit value lives in slot padding (INVARIANT 5)          Slot has no such field; the value is
+                                                            RelationalTriple.slot_val = pack(words in
+                                                            subject, words in relation); 2 of 7 lenses are
+                                                            consumed                                  [C]
+No external index (INVARIANT 2)                           true inside HashTable24; WordEngine keeps
+                                                            token_index, subject_index, object_index,
+                                                            addr_index, and lookup_radial requires addr_index [C]
+Relations re-derived on every load (INVARIANT 1)          true for engine.relations on the .crsl path; the
+                                                            WENG path stores relations and omits speaker
+                                                            spans; Relation slots are reloaded from the image [C]
+Speaker type                                              defined in word_engine.rs, in dada_engine.rs and
+                                                            re-exported from the absent conversation_learner [C]
+Four modules absent (START_HERE)                          confirmed: adaptive_dada, compositional_relations,
+                                                            conversation_learner, tests. Also absent:
+                                                            bench7.rs, EDIT_PLAN.md, Cargo.toml. The CLI
+                                                            ships as word-2.rs, undeclared in lib.rs       [C]
+~26,000 lines including the CLI                           25,994 = 16,972 library + 9,022 CLI            [C]
+The exhibits' own unit tests (table, carousel, hash_methods, superposition_decoder, interference): 34 of 34 pass.
+
+Not verifiable from the package: the bench7.rs benchmarks behind "ten benchmarked methods" and Tribonacci
+locality; the behaviour of the four absent modules, including the feedback rule "building on a turn is
+positive, restating it is negative"; EDIT_PLAN.md; whether finalize_relations runs in a normal session; the
+WENG save/load round trip (needs serde and bincode, not run).

@@ -1,0 +1,42 @@
+REPORT - SUNZI
+
+WHAT I BUILT
+A knowledge-base format in which the whole base is two integers, (M, K). M is the product of the keys
+(primes below 2^32); K is the one integer below M whose remainder modulo each key is that key's value.
+Reading is a remainder, existence is divisibility, overwrite and retraction are one lift or one division,
+a sub-base is a divisor, two bases are compared by one gcd and merged by one Chinese-remainder step. The
+pair is canonical: equal facts give equal bytes, whatever the order or history of the writes.
+Proof: proof/src, Zig, `zig test src/root.zig`, 54 tests, 3,629 lines including tests. No dependencies, no allocator.
+
+WHICH TEST IT PASSES
+TEST 4 (primary): the multiplicative structure of the integers - unique factorisation, CRT, gcd - carries
+the whole mechanism; none of the spent structures is used.
+TEST 1 (secondary): values are computed, not stored (one flipped bit changes every odd key's value), and
+the key set is the factorisation of the content.
+Not claimed: TEST 2, TEST 3.
+
+WHAT WAS CHECKED
+Exhaustively: all 96,768 bases over six primes are distinct and complete (bijection); all 331,776 ordered
+pairs over four primes for diff and for glue; every put, value and delete over four primes (12,096 cases).
+Randomised: 20,000-operation fuzz against an array model; write-order independence; glue laws on 300 facts;
+bignum against Python's int on 460 large vectors. Same bytes (digest 0x6e5e8b941866bdef) on Zig 0.14.1,
+0.15.2, 0.16.0 and 0.17.0, four build modes each, and on 32-bit wasm32.
+
+WHAT IT COSTS
+Every operation touches the whole number. At 1,000 facts a read is 11.5-13 us against 18-21 ns for the
+exhibits' table, so 170x slower at 250 facts and 600x at 1,000, growing linearly. Every write changes every
+limb of the file. One flipped bit corrupts every odd key (detectable by the seal, not correctable). 58.0 bits
+per fact. Names, enumeration of keys, and "all facts about X" have no cheap answer: the core addresses by
+prime, and turning a name into a prime needs either a dictionary (an index) or a probabilistic hash.
+
+WHAT I WOULD NEED TO GO FURTHER
+1. Real data. A corpus-sized key set to learn what n, value width and hit rates actually are.
+2. Residue pages to close the speed gap, measured against the exhibits' table on the same workload.
+3. 64-bit keys (two-limb remainders) so hash-to-prime stops colliding at 10^4 names.
+4. A key-allocation scheme that puts the subject in the key's residue class, for "all facts about X".
+5. A big-endian machine and a concurrent-writer story; neither was available or attempted.
+6. A decision on the name layer: dictionary or hash-to-prime. Both give something back (GAPS.txt G1).
+
+WHERE THINGS ARE
+PROPOSAL.txt (format, tests, failure modes, determinism, next steps), GAPS.txt (the ledger),
+proof/README.txt (command, files), proof/RUN_LOG.txt (every build that was run).

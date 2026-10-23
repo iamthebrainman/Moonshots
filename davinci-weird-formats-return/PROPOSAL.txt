@@ -1,0 +1,245 @@
+SUNZI
+A knowledge base that is one pair of integers
+
+Proposal for the Out-Weird commission.
+Proof:     proof/   Zig, one command:  zig test src/root.zig   (54 tests)
+Verified:  Zig 0.14.1, 0.15.2, 0.16.0, 0.17.0; Debug, ReleaseSafe, ReleaseFast, ReleaseSmall;
+           also wasm32-wasi (32-bit usize) under Node 22 WASI. See proof/RUN_LOG.txt.
+
+======================================================================
+1. THE IDEA
+======================================================================
+The Python stratum already reduces knowledge to integers: (subject_id, relation_id, object_id).
+SUNZI takes that to its end. The whole knowledge base is two integers.
+
+    M   the product of the keys. A key is a prime below 2^32.
+    K   the one integer in [0, M) whose remainder modulo each key is that key's value.
+
+That is the entire stored state. No table, no slot, no index, no header, no per-fact record.
+A fact's value is not kept anywhere: it is  K mod p.  A fact's existence is not looked up:
+it is  "p divides M".  Membership, read, overwrite, retract, restriction to a part, comparison
+of two bases and merge of two bases are all arithmetic on M and K, and every answer is exact.
+
+The Chinese Remainder Theorem makes K unique, so (M, K) is a canonical form. Two bases hold the
+same facts exactly when their two integers are equal. Bytes are a function of the facts, never of
+the order, the time or the history of the writes.
+
+======================================================================
+2. THE FORMAT
+======================================================================
+Objects
+  key     a prime p, 2 <= p < 2^32 (203,280,221 of them)
+  value   an integer v with 0 <= v < p
+  fact    (p, v);  a base is a finite set of facts with distinct keys
+  state   M = product of the keys (1 for the empty base)
+          K = the unique integer in [0, M) with K = v (mod p) for every fact (p, v) (0 for empty)
+Theorem 1 (canonical form). {finite partial functions p -> v, v < p} -> {(M, K) : M squarefree
+  product of primes, 0 <= K < M} is a bijection. (CRT: existence and uniqueness of K; the inverse
+  reads v = K mod p and the keys off the factorisation of M.)
+  Checked exhaustively: all 96,768 bases over the keys {2,3,5,7,11,13} give 96,768 distinct pairs;
+  the right-hand side has sigma(30030) = 96,768 elements.
+
+ADDRESSING RULES
+  A1  The address of a fact is its key. The address space is the primes below 2^32. Nothing is
+      allocated; an unused address costs nothing; there is no fixed table size.
+  A2  A key is present iff it divides M. No slot is probed.
+  A3  The value at address p must be below p, so capacity at an address is log2(p) bits and the
+      value is at most 32 bits.
+  A4  Names are not part of the core. Two optional policies turn a name into a prime:
+      dictionary (proof/src/knowledge.zig: exact, but the dictionary is an index) and
+      hash-to-prime with probing and a 12-bit fingerprint in the value (proof/src/named.zig: no
+      dictionary, but see section 6).
+  A5  Provenance rides in the address. In knowledge.zig the speaker of a fact is key mod 8
+      (1 user, 3 engine, 5 corpus, 7 unknown). It is stored nowhere; it is a property of the number.
+
+READ RULES
+  R1  has(p)       p | M                                   one pass over the limbs of M
+  R2  get(p)       K mod p                                 one more pass
+  R3  view(d)      (d, K mod d) for any divisor d of M. Every divisor is a sub-base, and the view is a
+                   reduction. A base with n keys has 2^n exact views.
+  R4  diff(A, B)   g = gcd(M_A, M_B)              keys both bases assert
+                   agree = gcd(|K_A - K_B|, g)    keys on which they hold equal values
+                   conflict = g / agree           keys on which they differ
+                   only_A = M_A / g,  only_B = M_B / g
+      Theorem 2: agree is exactly the product of the shared keys with equal values, because
+      p | (K_A - K_B) iff K_A = K_B (mod p). Nothing is enumerated.
+      Checked exhaustively: all 331,776 ordered pairs of bases over {2,3,5,7}.
+  R5  keys         trial division over a supplied ascending list of candidate primes, verified by
+                   recomposition (the product of what was found must equal M). The one operation the
+                   format does not make cheap.
+  R6  time travel  in an append-only history, the base after the first t insertions is view(M_t),
+                   M_t the product of the first t keys in arrival order. The past is a reduction of
+                   the present. (The arrival order is not in the integers; it is the timeline you keep.)
+
+WRITE RULES
+  W1  put(p, v), p new:       t = ((v - K) * M^-1) mod p;   K = K + M*t;   M = M*p
+  W2  put(p, v), p present:   Q = M/p;  t = ((v - K) * Q^-1) mod p;  K = K + Q*t;  if K >= M, K = K - M
+      Theorem 3 (frame): a write changes no other key's value. Checked exhaustively: every base over
+      {2,3,5,7}, every key, every value, and every delete (12,096 cases) against an independent
+      direct-CRT construction; plus a 20,000-operation differential fuzz against an array model.
+  W3  del(p)                  M = M/p;  K = K mod M.   put followed by del restores the bytes exactly.
+  W4  glue(A, B)              the one base holding every fact of both, when they agree wherever both speak:
+                              g = gcd(M_A, M_B);  m2 = M_B/g;  require g | (K_B - K_A)
+                              t = ((K_B - K_A)/g) * (M_A/g)^-1  (mod m2)
+                              M = M_A*m2;  K = K_A + M_A*t
+                              Otherwise error.Conflict. One Chinese-remainder step on two big numbers:
+                              no key enumerated, no fact replayed.
+      Glue is commutative, associative and idempotent, and restricting the result to M_A (or M_B)
+      returns A (or B): consistent bases form a join-semilattice, which is a CRDT.
+      Checked: all 331,776 ordered pairs over {2,3,5,7} (24,640 consistent, each equal to the union and
+      commutative; 307,136 refused); associativity and part-recovery on random three-way splits of a
+      300-fact base.
+  W5  seal (optional)         the integrity check is itself a fact: key 4294967291 holds a 32-bit digest of
+                              the canonical bytes of the rest. No header, no trailer, no new rule.
+
+BYTES  (one canonical string per base)
+  magic "SUNZI\0\0\1" (8) | u32be len(M) | M big-endian, minimal | u32be len(K) | K big-endian, minimal (empty if 0)
+  The decoder is strict: bad magic, leading zero bytes, K >= M, truncation, trailing bytes and hostile
+  lengths are all error.Malformed. It cannot cheaply prove M is squarefree; verify(universe) can.
+
+======================================================================
+3. WORKED EXAMPLES  (both are tests)
+======================================================================
+(a) put(7,3) -> (M,K) = (7,3).  put(11,10) -> K = 3 (mod 7) and 10 (mod 11) -> (77,10).
+    put(7,5) overwrites -> (77,54);  54 mod 7 = 5, 54 mod 11 = 10.
+    Bytes: 53 55 4E 5A 49 00 00 01 | 00 00 00 01 | 4D | 00 00 00 01 | 36      (18 bytes)
+
+(b) Student against teacher (the error_corrector scenario), printed by `zig test` from knowledge.zig:
+    teacher  dog IS animal, cat IS pet, ice CAUSES cold:  M = 0x800065c0153361528c5   K = 0x15252ac797e875f8654
+    student  dog HAS animal, cat IS pet, fire CAUSES heat: M = 0x800049c00d3760c1455   K = 0x47de06ee4b8ad94fcce
+    gcd(M_s, M_t)               = 0x40001240014c1  the two keys both assert
+    gcd(|K_s - K_t|, that)      = 0x200004d        = key 33554509 = (cat, pet): confirmed
+    shared / agree              = 0x2000045        = key 33554501 = (dog, animal): HAS against IS
+    M_s / shared = key (fire, heat), student only;  M_t / shared = key (ice, cold), teacher only.
+
+======================================================================
+4. WEIRDNESS TESTS
+======================================================================
+TEST 4  NEW LOAD-BEARING STRUCTURE                                      PASSES (primary)
+  The structure is the multiplicative structure of the integers: unique factorisation, the Chinese
+  Remainder Theorem, gcd. It carries the mechanism: every verb in section 2 is a divisibility, a
+  remainder, a gcd, a division or a CRT step, and removing them leaves nothing. It is not on the spent
+  list (no Fibonacci or golden-ratio geometry, no hashing, no phase, no FFT, no energy, no moire, no lens).
+  Exhibits it beats, in what they each do:
+   * Invariant 2, one fixed space of 48-byte slots (768 MiB at 2^24 slots): SUNZI has no slots and no empty
+     cells. Its size is its content: 58.0 bits per fact at 30-bit keys (measured, n = 250..1500).
+   * Invariant 5, ten bits read seven ways: SUNZI's lens is a divisor. A base of n keys has 2^n exact views,
+     and the readings of coprime lenses are independent by CRT, with no shared bits.
+   * Invariant 9, student/teacher graph diff by set difference over triples: here it is one gcd (3b).
+   * Invariant 4, the hash as empirical physics: here the address is a theorem, p | M. Nothing is measured
+     to be true; it is true.
+   * Persistence: the exhibits' table image depends on insertion order (4.9% to 34% of occupied slots differ
+     for identical facts, measured). SUNZI bytes are canonical (24 write orders x 6 fact sets: 0 bytes differ).
+  Adjacent to a spent move, and why it is not one: K = sum v_i E_i is a linear combination, which sounds like
+  superposition. But the CRT idempotents E_i are exactly orthogonal (E_i = 1 mod p_i, 0 mod p_j). A read
+  returns v_i exactly; there is no cross-term, no energy, no interference to estimate. The operations that
+  matter (divisibility, gcd, division) are multiplicative, not additive.
+
+TEST 1  COLLAPSE                                                         PASSES (secondary)
+  Two boundaries the exhibits keep come down.
+   * Storage into computation. No cell holds a value. A value is a function of the whole number: flipping any
+     single bit of K changes the value of every odd key (a theorem, since +-2^i is a unit mod an odd prime;
+     tested for every bit of a 120-key base). The table keeps values in slot fields and decodes them after.
+   * Addressing into content. The key set is the factorisation of the stored number. Membership,
+     sub-bases and comparison are operations on the content itself, not on an index beside it.
+
+NOT CLAIMED
+  TEST 2: reading K modulo a divisor is the "one value, many declared reads" move the exhibits already make.
+  TEST 3: time travel by reduction (R6) holds only for append-only histories, and provenance-from-the-address
+  (A5) moves information into the key choice rather than deriving it. Both are observations.
+
+======================================================================
+5. WHAT THE PROOF SHOWS    (proof/src, 54 tests, 3,629 lines including tests)
+======================================================================
+  big.zig        fixed-capacity bignum: Knuth D incl. its rare add-back branch (3 pinned vectors found by
+                 search; 6^7-case sweep proves the branch ran), binary gcd; agrees with Python's int on
+                 460 vectors of up to 12,160-bit operands (scratch oracle, not shipped)
+  primes.zig     Miller-Rabin exact for every u32 (checked against a sieve to 200,000 and on strong pseudoprimes)
+  sunzi.zig      the format: Theorem 1 (96,768 bases), Theorem 2 (331,776 pairs), Theorem 3 (12,096 writes),
+                 views (5,775 cases), glue (331,776 pairs + laws), time travel, canonical order independence,
+                 20,000-op fuzz, keys at the top of the u32 range, hostile bytes, seal (581 + 84 bit flips all detected)
+  named.zig      dictionary-free addressing and its failure modes, demonstrated as tests
+  knowledge.zig  relation facts with provenance in the address, student/teacher in one gcd, and the narrated demo
+  audit/         optional: executable reference measurements of the exhibits (see GAPS.txt part 4)
+  Golden digest: fnv1a64 of the canonical bytes of a fixed 400-operation scenario is 0x6e5e8b941866bdef on
+  all 24 builds (4 compilers x 4 build modes native, 4 compilers x 2 modes on wasm32).
+
+======================================================================
+6. FAILURE MODES
+======================================================================
+  F1  Everything is O(size of the store). Measured (ReleaseFast, 2.1 GHz Xeon VM, Zig 0.14.1 / 0.15.2):
+      get  3.1 us @250 facts, 5.9 us @500, 11.5-13 us @1000, 17 us @1500
+      put  2.2 us @250 ... 6.7-7.2 us @1000 ... 9.7-11 us @1500 (average while building)
+      The exhibits' own table lookup on the same machine: 18-21 ns. So reads are about 170x slower at 250
+      facts and about 600x at 1000, and the gap grows linearly.
+  F2  Write amplification is total: every write changes every limb of K (measured 1.0000). There is no
+      append log and no incremental persistence; a write rewrites the file.
+  F3  No locality. One flipped bit corrupts every odd key's value. The seal detects this with probability
+      about 1 - 2^-32 (non-cryptographic); nothing corrects it.
+  F4  Enumeration needs candidate primes: 658 ns per prime scanned at 63 limbs (Debug). Over the full u32
+      universe it is not practical; unmeasured.
+  F5  Names. A dictionary reintroduces an index. Hash-to-prime reintroduces collisions: probability
+      n^2/(2 x 203,280,221) = 0.25% at 1,000 names, 22% at 10,000. With the 12-bit fingerprint a false
+      "found" measured 0.11% in a deliberately crowded 40-prime range (45 / 40,000) and 0 / 20,000 at 300
+      names in the full range. When two names collide, the bytes depend on write order (tested). A raw
+      delete inside a probe chain hides the names behind it (tested); removal is therefore a tombstone.
+  F6  Values are below their key: at most 32 bits; a 25-bit payload needs keys above 2^25.
+  F7  Capacity is a comptime parameter. An operation that does not fit returns error.Overflow and leaves
+      the base unchanged. The mathematics is unbounded; this code is not.
+  F8  Cannot represent: all facts about a subject without a candidate list; several values under one key;
+      order; names that can be listed; keys of 2^32 or more; concurrent writers.
+  F9  Merge costs O(size^2) (schoolbook division, binary gcd); measured only up to 300 facts.
+
+======================================================================
+7. DETERMINISM
+======================================================================
+  Claimed. The pair (M, K) and its encoding are a pure function of one input: the finite partial function
+  {p -> v}. They do not depend on write order, deletions, earlier contents, allocator, pointer width,
+  endianness (the encoding is explicit big-endian), compiler, optimisation mode or operating system.
+  Evidence: 24 random write orders on each of 6 fact sets; a garbage-then-repair history; exhaustive
+  bijection; the golden digest above on 24 builds (4 compilers x 4 modes native, plus 4 compilers x 2 modes on wasm32).
+  Not claimed. Timing. The named layer when names collide (tested to differ). knowledge.zig key assignment,
+  which follows the insertion order of its dictionary: canonical in the key space, not in the name space.
+
+======================================================================
+8. SCALE
+======================================================================
+  Measured: size and timing at n = 250, 500, 1000, 1500 synthetic facts (29-30-bit keys, 20-bit values);
+  order independence at n = 40 and n = 400; glue at 300 facts; enumeration over a 4,203-prime universe.
+  Unmeasured: any real corpus; n above 1,500; anything on big-endian hardware; concurrent use.
+
+======================================================================
+9. WHERE IT GOES NEXT
+======================================================================
+  * Federated minds. glue makes a mind a join-semilattice. The user's facts, the engine's facts and the
+    corpus facts can live in three separate bases, merge in any order any number of times, and converge to
+    identical bytes. Convergence is checked by comparing two integers. Per-speaker views are divisors, so
+    splitting a merged mind back into its voices is a reduction.
+  * Residue pages. B independent bases selected by key, each with n/B facts: reads cost n/B and a write
+    touches one page. A table of residue bases; unmeasured; it trades some of the canonical form's
+    global simplicity for speed, and is the obvious route to the 170x-600x gap.
+  * The subject in the address. Allocate keys so that key mod q encodes the subject. "All facts about X"
+    then needs only the primes of one residue class as candidates: an index made of arithmetic, not memory.
+  * Wider keys. The mathematics has no 2^32 limit. Keys of 64 bits with two-limb remainders would push
+    hash-to-prime collisions from n^2/4e8 to n^2/4e17.
+  * Other Euclidean domains. The same format over polynomial rings or Gaussian integers (keys as prime
+    ideals). The polynomial case sits next to the spent FFT-bin storage and was set aside for that reason.
+  * Hardware. get is a remainder of one big number by many small primes: a straight pass, SIMD and GPU friendly.
+
+======================================================================
+10. LINEAGE AND ALTERNATIVES
+======================================================================
+  Lineage. The Chinese Remainder Theorem is the basis of residue number systems and of the Mignotte and
+  Asmuth-Bloom secret-sharing schemes; Godel numbering encodes sequences as prime powers. I searched the web
+  three times for a CRT key-value store and for a gcd-of-differences comparison of two bases and found
+  neither. That is absence of evidence, not a claim of priority.
+    https://en.wikipedia.org/wiki/Secret_sharing_using_the_Chinese_remainder_theorem
+    https://en.wikipedia.org/wiki/G%C3%B6del_numbering
+  Considered and set aside:
+   * Text as (bigram type, rank among all texts with that type) via the BEST theorem: sound enumerative
+     coding, but a codec, and every append re-ranks everything.
+   * The same CRT over GF(p)[x] (interpolation): adjacent to the spent FFT-bin storage.
+   * Invertible Bloom tables / Minisketch: known engineering, comparison only.
+   * Possible-worlds store as a reduced ordered BDD: canonical, but standard knowledge compilation.
+   * GF(2) parity store whose reads collapse the state: entertaining, but limited to parity constraints.
+   * Abelian sandpile group: reduces to characters, i.e. FFT again.

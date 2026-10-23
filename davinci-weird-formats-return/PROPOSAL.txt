@@ -162,7 +162,7 @@ NOT CLAIMED
   knowledge.zig  relation facts with provenance in the address, student/teacher in one gcd, and the narrated demo
   audit/         optional: executable reference measurements of the exhibits (see GAPS.txt part 4)
   Golden digest: fnv1a64 of the canonical bytes of a fixed 400-operation scenario is 0x6e5e8b941866bdef on
-  all 4 compilers x 4 build modes and on wasm32.
+  all 24 builds (4 compilers x 4 build modes native, 4 compilers x 2 modes on wasm32).
 
 ======================================================================
 6. FAILURE MODES
@@ -197,7 +197,7 @@ NOT CLAIMED
   {p -> v}. They do not depend on write order, deletions, earlier contents, allocator, pointer width,
   endianness (the encoding is explicit big-endian), compiler, optimisation mode or operating system.
   Evidence: 24 random write orders on each of 6 fact sets; a garbage-then-repair history; exhaustive
-  bijection; the golden digest above on 18 builds (4 compilers x 4 modes native, plus wasm32).
+  bijection; the golden digest above on 24 builds (4 compilers x 4 modes native, plus 4 compilers x 2 modes on wasm32).
   Not claimed. Timing. The named layer when names collide (tested to differ). knowledge.zig key assignment,
   which follows the insertion order of its dictionary: canonical in the key space, not in the name space.
 

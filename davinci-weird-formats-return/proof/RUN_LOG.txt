@@ -1,0 +1,47 @@
+SUNZI proof - verification log for the final code
+host: Linux 6.18.44-fc-v140 x86_64; cpu: Intel(R) Xeon(R) Processor @ 2.10GHz
+
+A. zig test src/root.zig  (native x86_64-linux, 16 builds)
+ZIG      MODE          RESULT                   GOLDEN_FNV1A64      
+0.14.1   Debug         All 54 tests passed.     0x6e5e8b941866bdef  
+0.14.1   ReleaseSafe   All 54 tests passed.     0x6e5e8b941866bdef  
+0.14.1   ReleaseFast   All 54 tests passed.     0x6e5e8b941866bdef  
+0.14.1   ReleaseSmall  All 54 tests passed.     0x6e5e8b941866bdef  
+0.15.2   Debug         All 54 tests passed.     0x6e5e8b941866bdef  
+0.15.2   ReleaseSafe   All 54 tests passed.     0x6e5e8b941866bdef  
+0.15.2   ReleaseFast   All 54 tests passed.     0x6e5e8b941866bdef  
+0.15.2   ReleaseSmall  All 54 tests passed.     0x6e5e8b941866bdef  
+0.16.0   Debug         All 54 tests passed.     0x6e5e8b941866bdef  
+0.16.0   ReleaseSafe   All 54 tests passed.     0x6e5e8b941866bdef  
+0.16.0   ReleaseFast   All 54 tests passed.     0x6e5e8b941866bdef  
+0.16.0   ReleaseSmall  All 54 tests passed.     0x6e5e8b941866bdef  
+0.17.0   Debug         All 54 tests passed.     0x6e5e8b941866bdef  
+0.17.0   ReleaseSafe   All 54 tests passed.     0x6e5e8b941866bdef  
+0.17.0   ReleaseFast   All 54 tests passed.     0x6e5e8b941866bdef  
+0.17.0   ReleaseSmall  All 54 tests passed.     0x6e5e8b941866bdef  
+
+B. zig test audit/exhibit_audit.zig
+0.14.1   All 8 tests passed.
+0.15.2   All 8 tests passed.
+0.16.0   All 8 tests passed.
+0.17.0   All 8 tests passed.
+
+C. wasm32-wasi (32-bit usize) under Node v22.22.0 WASI
+ZIG      MODE          RESULT                   GOLDEN_FNV1A64      
+0.14.1   Debug         All 54 tests passed.     0x6e5e8b941866bdef  
+0.14.1   ReleaseSafe   All 54 tests passed.     0x6e5e8b941866bdef  
+0.15.2   Debug         All 54 tests passed.     0x6e5e8b941866bdef  
+0.15.2   ReleaseSafe   All 54 tests passed.     0x6e5e8b941866bdef  
+0.16.0   Debug         All 54 tests passed.     0x6e5e8b941866bdef  
+0.16.0   ReleaseSafe   All 54 tests passed.     0x6e5e8b941866bdef  
+0.17.0   Debug         All 54 tests passed.     0x6e5e8b941866bdef  
+0.17.0   ReleaseSafe   All 54 tests passed.     0x6e5e8b941866bdef  
+
+Notes
+* Every row prints the same golden digest: the canonical bytes of a fixed 400-operation scenario hash to
+  0x6e5e8b941866bdef on 24 builds (16 native + 8 wasm32), so the bytes do not depend on compiler, build
+  mode, pointer width or operating system.
+* Timing figures quoted in PROPOSAL.txt come from the [measure] test run with -O ReleaseFast on Zig 0.14.1
+  and 0.15.2 (std.time timers do not exist in 0.16 / 0.17).
+* wasm32 builds: zig test -target wasm32-wasi -O <mode> --stack 8388608 --test-no-exec, run by a 10-line
+  Node WASI launcher kept outside the deliverable.

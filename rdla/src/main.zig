@@ -28,6 +28,22 @@ pub fn main(init: std.process.Init) !void {
         std.debug.print("usage: rdla <tape.txt> [idioms.txt] [shards] [window]\n", .{});
         return;
     }
+    if (std.mem.eql(u8, args[1], "probe")) {
+        if (args.len < 4) return std.debug.print("usage: rdla probe <table.rdla> <word>\n", .{});
+        var o = try store.open(io, args[2], false);
+        defer o.acc.deinit();
+        var sp2 = tok.Spellings.init(a);
+        try store.readSpellings(io, a, args[2], &sp2);
+        const t = gen.Table{ .acc = &o.acc, .sp = &sp2, .window = o.header.window };
+        gen.debug = true;
+        const u = tok.fnv(args[3]);
+        for ([_]gen.Side{ .right, .left }) |sd| {
+            const r = try t.readout(a, u, sd, false, 10);
+            a.free(r);
+        }
+        _ = try t.isa(a, u);
+        return;
+    }
     if (std.mem.eql(u8, args[1], "ask")) {
         if (args.len < 4) return std.debug.print("usage: rdla ask <table.rdla> \"question\" [sentences]\n", .{});
         var o = try store.open(io, args[2], false);

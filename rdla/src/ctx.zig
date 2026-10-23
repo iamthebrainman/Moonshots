@@ -29,6 +29,10 @@ pub fn role(offset: i32) Vec {
     return seedVec(0x524F4C45_00000000 +% @as(u64, @bitCast(@as(i64, offset))));
 }
 
+pub fn pairKey(a: u64, b: u64) u64 {
+    return mix(a ^ (mix(b) +% 0x51ED_270B_0000_0001)) | 1;
+}
+
 pub const GLOSS_ROLE: u64 = 0x474C4F53_53000001;
 
 pub fn bind(a: Vec, b: Vec) Vec {
@@ -45,6 +49,10 @@ pub const Acc = struct {
     right: []i32,
     mask: usize,
     used: usize = 0,
+    /// Operator units (fused phrases such as "is an"). When a unit is directly followed by one, the
+    /// text after the operator is also bundled under the pair (unit, operator): the operator-conditioned
+    /// context that answers "what is <unit>" without any counting.
+    ops: []const u64 = &.{},
     map: ?[]align(std.heap.page_size_min) u8 = null, // set when the arrays live in a mapped file (store.zig)
 
     pub fn init(alloc: std.mem.Allocator, cap_pow2: u6) !Acc {
@@ -110,6 +118,13 @@ pub const Acc = struct {
                 if (p >= o) addVec(self.left[s * D ..][0..D], bind(seedVec(units[p - o]), role(@as(i32, @intCast(o)))), 1);
                 if (p + o < units.len) addVec(self.right[s * D ..][0..D], bind(seedVec(units[p + o]), role(@as(i32, @intCast(o)))), 1);
             }
+            if (p + 1 < units.len) for (self.ops) |op| if (units[p + 1] == op) {
+                const ps = try self.slot(pairKey(units[p], op));
+                self.count[ps] += 1;
+                var q: usize = 1;
+                while (q <= window and p + 1 + q < units.len) : (q += 1)
+                    addVec(self.right[ps * D ..][0..D], bind(seedVec(units[p + 1 + q]), role(@as(i32, @intCast(q)))), 1);
+            };
         }
     }
 

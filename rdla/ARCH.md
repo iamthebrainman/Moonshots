@@ -39,3 +39,18 @@ Determinism: same tape + same question + same model file -> identical text. Temp
 
 ## Build order
 M1 substrate (done) -> M2 operator metric + fusion + parallel shards -> M3 signatures/types/genre -> M4 teaching queue for idioms -> M5 planner + typed SRTN (port of dadada to Zig 0.15 API) -> M6 400 MB run.
+
+## Update: lens over a mapped tape (current design)
+
+The persisted file is the TAPE plus a positions index (`lens.zig`, `rdla index`), not extracted facts.
+A question picks an answer type (wh-word x modal); the answer type picks a LENS (a slot requirement:
+operator word-sequences after the subject, clause-initial subject, noun-phrase end cues); `find`
+walks the subject's occurrences through the index and reads the tape. Every match is a real place in the
+tape and is cited as evidence. Senses stay apart because they are different occurrences. Templates
+(`gen.zig`) are used only if every slot they need was found. The context-bundle accumulator
+(`ctx.zig`, `store.zig`) remains as the "float" side for operator discovery; answers do not use it.
+
+Slot-requirement rules currently hand-entered in `lens.zig`/`gen.zig`: the copula operator list, the
+because/by/in/should operator lists, noun-phrase end cues (-ly, -ed, function words), lead-sentence
+priority (title line, paragraph start). Function words are the units present in every 1/64th stretch
+of the tape. Deriving the operator lists and cues from the tape is the next step.

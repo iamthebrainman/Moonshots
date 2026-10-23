@@ -39,11 +39,12 @@ pub fn parse(a: std.mem.Allocator, text: []const u8, sp: *tok.Spellings, bad: *u
         };
         const phrase = line[1..close];
         const rest = std.mem.trim(u8, line[close + 1 ..], " \t");
-        if (!std.mem.startsWith(u8, rest, "means")) {
+        // `"phrase"` alone is a fusion-only operator (no taught gloss); otherwise `"phrase" means gloss`.
+        if (rest.len != 0 and !std.mem.startsWith(u8, rest, "means")) {
             bad.* += 1;
             continue;
         }
-        const gloss = rest[5..];
+        const gloss = if (rest.len == 0) "" else rest[5..];
         var pt: std.ArrayList(u64) = .empty;
         defer pt.deinit(a);
         var gt: std.ArrayList(u64) = .empty;

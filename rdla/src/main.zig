@@ -6,6 +6,7 @@ const idiom = @import("idiom.zig");
 const ctx = @import("ctx.zig");
 const store = @import("store.zig");
 const gen = @import("gen.zig");
+const lens = @import("lens.zig");
 
 test {
     _ = tok;
@@ -13,6 +14,7 @@ test {
     _ = ctx;
     _ = @import("store.zig");
     _ = gen;
+    _ = @import("lens.zig");
 }
 
 /// Minimum attestations for a taught gloss (glossAuto raises it to clear the unit's own context noise).
@@ -28,38 +30,49 @@ pub fn main(init: std.process.Init) !void {
         std.debug.print("usage: rdla <tape.txt> [idioms.txt] [shards] [window]\n", .{});
         return;
     }
-    if (std.mem.eql(u8, args[1], "probe")) {
-        if (args.len < 4) return std.debug.print("usage: rdla probe <table.rdla> <word>\n", .{});
-        var o = try store.open(io, args[2], false);
-        defer o.acc.deinit();
+    if (std.mem.eql(u8, args[1], "index")) {
+        if (args.len < 4) return std.debug.print("usage: rdla index <tape.txt> <idioms.txt|-> <out.rdlt>\n", .{});
         var sp2 = tok.Spellings.init(a);
-        try store.readSpellings(io, a, args[2], &sp2);
-        const t = gen.Table{ .acc = &o.acc, .sp = &sp2, .window = o.header.window };
-        gen.debug = true;
-        const u = tok.fnv(args[3]);
-        for ([_]gen.Side{ .right, .left }) |sd| {
-            const r = try t.readout(a, u, sd, false, 10);
-            a.free(r);
+        const text2 = try std.Io.Dir.cwd().readFileAlloc(io, args[2], a, .limited(1 << 32));
+        var raw2: std.ArrayList(u64) = .empty;
+        try tok.tokenize(a, text2, &raw2, &sp2);
+        var bad2: usize = 0;
+        var es2 = idiom.Entries{};
+        if (!std.mem.eql(u8, args[3], "-")) {
+            const itext = try std.Io.Dir.cwd().readFileAlloc(io, args[3], a, .limited(1 << 28));
+            es2 = try idiom.parse(a, itext, &sp2, &bad2);
         }
-        _ = try t.isa(a, u);
+        const hits2 = try a.alloc(usize, es2.list.items.len);
+        @memset(hits2, 0);
+        const fused = try idiom.fuse(a, raw2.items, &es2, hits2);
+        for (es2.list.items) |e| try sp2.put(e.unit, e.name);
+        const img = try lens.build(a, fused.items, &sp2, &es2);
+        try lens.write(io, args[4], img);
+        std.debug.print("indexed {d} tokens ({d} bytes) -> {s}; {d} idioms\n", .{ fused.items.len, img.len, args[4], es2.list.items.len });
         return;
     }
-    if (std.mem.eql(u8, args[1], "ask")) {
-        if (args.len < 4) return std.debug.print("usage: rdla ask <table.rdla> \"question\" [sentences]\n", .{});
-        var o = try store.open(io, args[2], false);
-        defer o.acc.deinit();
-        var sp2 = tok.Spellings.init(a);
-        try store.readSpellings(io, a, args[2], &sp2);
-        const t = gen.Table{ .acc = &o.acc, .sp = &sp2, .window = o.header.window };
-        const q = (try gen.parseQuestion(a, t, args[3])) orelse return std.debug.print("(no known subject in the question)\n", .{});
-        var w = gen.Weights{};
-        var r = try gen.Realiser.init(a, t, q, &w);
-        defer r.deinit();
-        var out: std.ArrayList(u8) = .empty;
-        const ns: usize = if (args.len > 4) try std.fmt.parseInt(usize, args[4], 10) else 2;
-        try r.render(&out, ns);
-        if (q.kind == .yesno) if (try gen.rankOf(a, t, q.subject, q.other)) |rk| std.debug.print("[rank {d} of {d}]\n", .{ rk, o.acc.used });
-        std.debug.print("[{s}] {s}\n", .{ @tagName(q.kind), out.items });
+    if (std.mem.eql(u8, args[1], "ask") or std.mem.eql(u8, args[1], "probe")) {
+        if (args.len < 4) return std.debug.print("usage: rdla ask <tape.rdlt> \"question\"   |   rdla probe <tape.rdlt> <word>\n", .{});
+        var ix = try lens.Index.open(io, a, args[2]);
+        defer ix.deinit();
+        if (std.mem.eql(u8, args[1], "probe")) {
+            const id = ix.idOfWord(args[3]) orelse return std.debug.print("(not in the tape)\n", .{});
+            std.debug.print("{s}: {d} occurrences\n", .{ args[3], ix.count(id) });
+            for (ix.occ(id)[0..@min(3, ix.occ(id).len)]) |p| std.debug.print("  @{d}: {s}\n", .{ p, try ix.sentence(a, p) });
+            for ([_][]const u8{ "is", "an", "italian", "dish", "the", "best", "sport" }) |w| if (ix.idOfWord(w)) |wi| std.debug.print("  func({s})={}\n", .{ w, ix.func[wi] });
+            const ms = try lens.find(a, &ix, id, lens.isa_lens);
+            for (ms) |m| {
+                var b: std.ArrayList(u8) = .empty;
+                try lens.phraseText(a, &ix, m, &b);
+                std.debug.print("  is-a slot: {s}   <- {s}\n", .{ b.items, try ix.sentence(a, m.pos) });
+            }
+            return;
+        }
+        const q = (try gen.parseQuestion(a, &ix, args[3])) orelse return std.debug.print("(no known subject in the question)\n", .{});
+        var r = try gen.Realiser.init(a, &ix, q);
+        const ans = try r.render();
+        std.debug.print("[{s}] {s}\n", .{ @tagName(ans.kind), ans.text });
+        if (ans.evidence_pos) |p| std.debug.print("  evidence @{d}: {s}\n", .{ p, try ix.sentence(a, p) });
         return;
     }
     const shards: usize = if (args.len > 3) try std.fmt.parseInt(usize, args[3], 10) else 1;

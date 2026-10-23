@@ -15,10 +15,10 @@ test {
 
 const Row = struct { h: u64, asym: f64, n: u32 };
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const a = gpa.allocator();
-    const args = try std.process.argsAlloc(a);
+pub fn main(init: std.process.Init) !void {
+    const a = init.gpa;
+    const io = init.io;
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
     if (args.len < 2) {
         std.debug.print("usage: rdla <tape.txt> [idioms.txt] [shards] [window]\n", .{});
         return;
@@ -27,14 +27,14 @@ pub fn main() !void {
     const window: usize = if (args.len > 4) try std.fmt.parseInt(usize, args[4], 10) else 4;
 
     var sp = tok.Spellings.init(a);
-    const text = try std.fs.cwd().readFileAlloc(a, args[1], 1 << 31);
+    const text = try std.Io.Dir.cwd().readFileAlloc(io, args[1], a, .limited(1 << 31));
     var raw: std.ArrayList(u64) = .empty;
     try tok.tokenize(a, text, &raw, &sp);
 
     var bad: usize = 0;
     var es = idiom.Entries{};
     if (args.len > 2 and !std.mem.eql(u8, args[2], "-")) {
-        const itext = try std.fs.cwd().readFileAlloc(a, args[2], 1 << 28);
+        const itext = try std.Io.Dir.cwd().readFileAlloc(io, args[2], a, .limited(1 << 28));
         es = try idiom.parse(a, itext, &sp, &bad);
     }
     const hits = try a.alloc(usize, es.list.items.len);
@@ -49,7 +49,7 @@ pub fn main() !void {
     var cap: u6 = 10;
     while ((@as(usize, 1) << cap) < seen.count() * 2 and cap < 40) cap += 1;
     const out_path: ?[]const u8 = if (args.len > 5) args[5] else null;
-    var acc = if (out_path) |op| try store.create(op, cap, @intCast(window)) else try ctx.Acc.init(a, cap);
+    var acc = if (out_path) |op| try store.create(io, op, cap, @intCast(window)) else try ctx.Acc.init(a, cap);
     const per = (units.items.len + shards - 1) / shards;
     var s: usize = 0;
     while (s < shards) : (s += 1) {
@@ -61,7 +61,7 @@ pub fn main() !void {
 
     if (out_path) |op| {
         try store.sync(&acc);
-        try store.writeSpellings(op, &sp);
+        try store.writeSpellings(io, op, &sp);
         std.debug.print("wrote {s}\n", .{op});
     }
     std.debug.print("tokens {d}  units {d}  distinct {d}  idioms {d} (bad lines {d})  shards {d}  window {d}  D {d}\n", .{ raw.items.len, units.items.len, acc.used, es.list.items.len, bad, shards, window, ctx.D });

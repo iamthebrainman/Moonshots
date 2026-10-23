@@ -13,6 +13,7 @@
 //! so untouched slots cost no disk or RAM. Counters are integer sums, so the bytes are a pure
 //! function of the tape (shard-independent) and identical runs give identical files.
 const std = @import("std");
+const Io = std.Io;
 const ctx = @import("ctx.zig");
 const tok = @import("tok.zig");
 
@@ -91,18 +92,18 @@ fn view(map: []align(std.heap.page_size_min) u8, cap: usize) ctx.Acc {
     };
 }
 
-fn mapFile(file: std.fs.File, len: usize, writable: bool) ![]align(std.heap.page_size_min) u8 {
-    const prot: u32 = if (writable) std.posix.PROT.READ | std.posix.PROT.WRITE else std.posix.PROT.READ;
+fn mapFile(file: Io.File, len: usize, writable: bool) ![]align(std.heap.page_size_min) u8 {
+    const prot: std.posix.PROT = if (writable) .{ .READ = true, .WRITE = true } else .{ .READ = true };
     return std.posix.mmap(null, len, prot, .{ .TYPE = .SHARED }, file.handle, 0);
 }
 
 /// Creates (truncating) a file-backed accumulator with 2^cap_pow2 slots. Writes the header immediately.
-pub fn create(path: []const u8, cap_pow2: u6, window: u32) !ctx.Acc {
+pub fn create(io: Io, path: []const u8, cap_pow2: u6, window: u32) !ctx.Acc {
     const cap: usize = @as(usize, 1) << cap_pow2;
     const l = Layout.of(cap);
-    const f = try std.fs.cwd().createFile(path, .{ .read = true, .truncate = true });
-    defer f.close();
-    try f.setEndPos(l.end);
+    const f = try Io.Dir.cwd().createFile(io, path, .{ .read = true, .truncate = true });
+    defer f.close(io);
+    try f.setLength(io, l.end);
     const map = try mapFile(f, l.end, true);
     const hdr = Header{ .cap = cap, .window = window };
     @memcpy(map[0..64], std.mem.asBytes(&hdr));
@@ -112,10 +113,10 @@ pub fn create(path: []const u8, cap_pow2: u6, window: u32) !ctx.Acc {
 pub const Opened = struct { acc: ctx.Acc, header: Header };
 
 /// Maps an existing file. Validates magic/version/dimension/size only: O(1), nothing is read until touched.
-pub fn open(path: []const u8, writable: bool) !Opened {
-    const f = try std.fs.cwd().openFile(path, .{ .mode = if (writable) .read_write else .read_only });
-    defer f.close();
-    const len = (try f.stat()).size;
+pub fn open(io: Io, path: []const u8, writable: bool) !Opened {
+    const f = try Io.Dir.cwd().openFile(io, path, .{ .mode = if (writable) .read_write else .read_only });
+    defer f.close(io);
+    const len = (try f.stat(io)).size;
     if (len < 64) return Error.Truncated;
     const map = try mapFile(f, len, writable);
     errdefer std.posix.munmap(map);
@@ -155,11 +156,11 @@ pub fn verify(acc: *ctx.Acc) Error!void {
 
 /// Appends the unit spellings after the table (so answers can name units). Call after the last sync()
 /// has NOT been made: this rewrites the header offset, then the caller syncs again.
-pub fn writeSpellings(path: []const u8, sp: *const tok.Spellings) !void {
-    const f = try std.fs.cwd().openFile(path, .{ .mode = .read_write });
-    defer f.close();
+pub fn writeSpellings(io: Io, path: []const u8, sp: *const tok.Spellings) !void {
+    const f = try Io.Dir.cwd().openFile(io, path, .{ .mode = .read_write });
+    defer f.close(io);
     var hb: [64]u8 = undefined;
-    _ = try f.preadAll(&hb, 0);
+    _ = try f.readPositionalAll(io, &hb, 0);
     var hdr: Header = undefined;
     @memcpy(std.mem.asBytes(&hdr), &hb);
     const base = Layout.of(@intCast(hdr.cap)).end;
@@ -177,14 +178,14 @@ pub fn writeSpellings(path: []const u8, sp: *const tok.Spellings) !void {
         try buf.appendSlice(a, &r);
         try buf.appendSlice(a, e.value_ptr.*[0..@min(e.value_ptr.*.len, 65535)]);
     }
-    try f.pwriteAll(buf.items, base);
-    try f.setEndPos(base + buf.items.len);
+    try f.writePositionalAll(io, buf.items, base);
+    try f.setLength(io, base + buf.items.len);
     hdr.spell_off = base;
-    try f.pwriteAll(std.mem.asBytes(&hdr), 0);
+    try f.writePositionalAll(io, std.mem.asBytes(&hdr), 0);
 }
 
-pub fn readSpellings(a: std.mem.Allocator, path: []const u8, sp: *tok.Spellings) !void {
-    const data = try std.fs.cwd().readFileAlloc(a, path, 1 << 40);
+pub fn readSpellings(io: Io, a: std.mem.Allocator, path: []const u8, sp: *tok.Spellings) !void {
+    const data = try Io.Dir.cwd().readFileAlloc(io, path, a, .limited(1 << 40));
     defer a.free(data);
     var hdr: Header = undefined;
     @memcpy(std.mem.asBytes(&hdr), data[0..64]);
@@ -206,6 +207,7 @@ const testing = std.testing;
 
 test "store: file-backed accumulator equals in-memory accumulator, survives reopen, detects corruption" {
     const a = testing.allocator;
+    const io = testing.io;
     var units: [500]u64 = undefined;
     var s: u64 = 11;
     for (&units) |*u| {
@@ -217,23 +219,23 @@ test "store: file-backed accumulator equals in-memory accumulator, survives reop
     try mem.centers(&units, 0, units.len, 3);
 
     const path = "store_test.rdla";
-    defer std.fs.cwd().deleteFile(path) catch {};
+    defer Io.Dir.cwd().deleteFile(io, path) catch {};
     {
-        var disk = try create(path, 6, 3);
+        var disk = try create(io, path, 6, 3);
         defer disk.deinit();
         try disk.centers(&units, 0, units.len, 3);
         try sync(&disk);
         try testing.expect(mem.eql(&disk));
     }
     {
-        var o = try open(path, false);
+        var o = try open(io, path, false);
         defer o.acc.deinit();
         try testing.expect(mem.eql(&o.acc));
         try testing.expectEqual(@as(u32, 3), o.header.window);
         try verify(&o.acc);
     }
     {
-        var o = try open(path, true);
+        var o = try open(io, path, true);
         defer o.acc.deinit();
         o.acc.left[5] +%= 1;
         try testing.expectError(Error.ChecksumMismatch, verify(&o.acc));
@@ -241,42 +243,44 @@ test "store: file-backed accumulator equals in-memory accumulator, survives reop
 }
 
 test "store: bad magic and truncation are rejected" {
+    const io = testing.io;
     const path = "store_bad.rdla";
-    defer std.fs.cwd().deleteFile(path) catch {};
+    defer Io.Dir.cwd().deleteFile(io, path) catch {};
     {
-        const f = try std.fs.cwd().createFile(path, .{});
-        defer f.close();
-        try f.writeAll(&([_]u8{0xDE} ** 128));
+        const f = try Io.Dir.cwd().createFile(io, path, .{});
+        defer f.close(io);
+        try f.writePositionalAll(io, &([_]u8{0xDE} ** 128), 0);
     }
-    try testing.expectError(Error.BadMagic, open(path, false));
-    var d = try create(path, 6, 1);
+    try testing.expectError(Error.BadMagic, open(io, path, false));
+    var d = try create(io, path, 6, 1);
     d.deinit();
-    const f = try std.fs.cwd().openFile(path, .{ .mode = .read_write });
-    try f.setEndPos(1000);
-    f.close();
-    try testing.expectError(Error.Truncated, open(path, false));
+    const f = try Io.Dir.cwd().openFile(io, path, .{ .mode = .read_write });
+    try f.setLength(io, 1000);
+    f.close(io);
+    try testing.expectError(Error.Truncated, open(io, path, false));
 }
 
 test "store: spellings round-trip" {
     const a = testing.allocator;
+    const io = testing.io;
     const path = "store_sp.rdla";
-    defer std.fs.cwd().deleteFile(path) catch {};
-    var d = try create(path, 6, 1);
+    defer Io.Dir.cwd().deleteFile(io, path) catch {};
+    var d = try create(io, path, 6, 1);
     d.deinit();
     var sp = tok.Spellings.init(a);
     defer sp.deinit();
     try sp.put(42, "hello");
     try sp.put(7, "kick the bucket");
-    try writeSpellings(path, &sp);
+    try writeSpellings(io, path, &sp);
     var back = tok.Spellings.init(a);
     defer {
         var it = back.valueIterator();
         while (it.next()) |v| a.free(v.*);
         back.deinit();
     }
-    try readSpellings(a, path, &back);
+    try readSpellings(io, a, path, &back);
     try testing.expectEqualStrings("hello", back.get(42).?);
     try testing.expectEqualStrings("kick the bucket", back.get(7).?);
-    var o = try open(path, false);
+    var o = try open(io, path, false);
     o.acc.deinit();
 }
